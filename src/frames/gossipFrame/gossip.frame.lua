@@ -1169,168 +1169,237 @@ function DGossipFrameAvailableQuestsUpdate(questsTable)
 end
 
 function DGossipFrameActiveQuestsUpdate(questsTable)
-    if not questsTable or table.getn(questsTable) == 0 then return end
-
-    local dataSize = table.getn(questsTable)
-
-    DebugMsg(string.format("DEBUG: ActiveQuests - dataSize=%d", dataSize))
-
-    local quests = {}
-    local i = 1
-
-    -- Последовательный парсинг с правильным определением isComplete
-    while i <= dataSize do
-        local field = questsTable[i]
-
-        -- Ищем строку (title квеста)
-        if type(field) == "string" then
-            local questTitle = field
-            local questLevel = nil
-            local isComplete = false
-            local isLowLevel = nil
-
-            local nextIndex = i + 1
-
-            -- Пропускаем nil поля
-            while nextIndex <= dataSize and questsTable[nextIndex] == nil do
-                nextIndex = nextIndex + 1
-            end
-
-            -- Ищем level (число > 1 или < 0)
-            if nextIndex <= dataSize and type(questsTable[nextIndex]) == "number" then
-                local val = questsTable[nextIndex]
-                if val > 1 or val < 0 then
-                    questLevel = val
-                    nextIndex = nextIndex + 1
-                end
-            end
-
-            -- Пропускаем nil снова
-            while nextIndex <= dataSize and questsTable[nextIndex] == nil do
-                nextIndex = nextIndex + 1
-            end
-
-            -- Ищем флаги isLowLevel и isComplete (0 или 1)
-            local flagsFound = 0
-            while nextIndex <= dataSize and flagsFound < 2 do
-                local val = questsTable[nextIndex]
-                if type(val) == "number" and (val == 0 or val == 1) then
-                    if flagsFound == 0 then
-                        -- Первый флаг
-                        if nextIndex + 1 <= dataSize then
-                            local nextVal = questsTable[nextIndex + 1]
-                            if type(nextVal) == "number" and (nextVal == 0 or nextVal == 1) then
-                                -- Два флага: isLowLevel, isComplete
-                                isLowLevel = (val == 1)
-                                isComplete = (nextVal == 1)
-                                nextIndex = nextIndex + 2
-                                flagsFound = 2
-                            else
-                                -- Один флаг: isComplete
-                                isComplete = (val == 1)
-                                nextIndex = nextIndex + 1
-                                flagsFound = 1
-                            end
-                        else
-                            -- Последний флаг: isComplete
-                            isComplete = (val == 1)
-                            nextIndex = nextIndex + 1
-                            flagsFound = 1
-                        end
-                    end
-                else
-                    break
-                end
-                break
-            end
-
-            -- === ИСПРАВЛЕНО: Определение isComplete для 2.4.3 ===
-            if not isComplete then
-                -- Способ 1: Проверка по ключевым словам в названии
-                if IsTalkQuest(questTitle) then
-                    isComplete = true
-                    DebugMsg(string.format("DEBUG: Quest '%s' matched TALK keywords -> COMPLETE", questTitle))
-                else
-                    -- Способ 2: Проверка через QuestLog
-                    -- 0 objectives = talk quest (выполнен)
-                    -- >0 objectives = обычный квест (проверяем qComplete)
-                    local numEntries = GetNumQuestLogEntries()
-                    if numEntries and numEntries > 0 then
-                        for q = 1, numEntries do
-                            local qTitle, qLevel, qTag, qGroup, qPlayer, qComplete = GetQuestLogTitle(q)
-                            if qTitle and qTitle == questTitle then
-                                local numObjectives = GetNumQuestLeaderBoards(q)
-                                
-                                if not numObjectives or numObjectives == 0 then
-                                    -- Нет objectives — это "поговорительный" квест, выполнен
-                                    isComplete = true
-                                    DebugMsg(string.format("DEBUG: Quest '%s' has 0 objectives -> COMPLETE", questTitle))
-                                elseif qComplete and qComplete ~= 0 then
-                                    -- Есть objectives и qComplete говорит что выполнен
-                                    isComplete = true
-                                    DebugMsg(string.format("DEBUG: Quest '%s' qComplete=%s -> COMPLETE", questTitle, tostring(qComplete)))
-                                else
-                                    -- Есть objectives и qComplete=nil/0 — НЕ выполнен
-                                    isComplete = false
-                                    DebugMsg(string.format("DEBUG: Quest '%s' has %d objectives, qComplete=%s -> INCOMPLETE", questTitle, numObjectives, tostring(qComplete)))
-                                end
-                                break
-                            end
-                        end
-                    end
-                    
-                    -- УБРАНО: Способ 3 (2-field auto-complete) — он давал ложные срабатывания!
-                end
-            end
-
-            table.insert(quests, {
-                title = questTitle,
-                level = questLevel,
-                isComplete = isComplete,
-                isLowLevel = isLowLevel
-            })
-
-            DebugMsg(string.format("DEBUG: Parsed quest - title='%s', level=%s, isComplete=%s", 
-                tostring(questTitle), tostring(questLevel), tostring(isComplete)))
-
-            i = nextIndex
-        else
-            DebugMsg(string.format("DEBUG: Skipping field %d = %s", i, tostring(field)))
-            i = i + 1
-        end
+    if not questsTable then
+        return
     end
 
-    local numQuests = #quests
-    DebugMsg(string.format("DEBUG: ActiveQuests - parsed %d valid quests", numQuests))
+    local dataSize = table.getn(questsTable)
+    DebugMsg(string.format("DEBUG: ActiveQuests - dataSize=%d", dataSize))
 
-    if numQuests == 0 then return end
+    -- === РАСШИРЕННЫЙ ДЕБАГ: выводим все сырые значения ===
+    DebugMsg("DEBUG: === RAW GOSSIP ACTIVE QUESTS DATA ===")
+    for i = 1, dataSize do
+        local val = questsTable[i]
+        local valType = type(val)
+        DebugMsg(string.format("  [%d] = %s (%s)", i, tostring(val), valType))
+    end
+    DebugMsg("DEBUG: === END RAW DATA ===")
 
-    local titleIndex = 1
-
-    for i = 1, numQuests do
+    -- Получаем количество активных квестов через правильный API
+    local numActiveQuests = GetNumGossipActiveQuests()
+    DebugMsg(string.format("DEBUG: GetNumGossipActiveQuests() = %d", numActiveQuests))
+    
+    if numActiveQuests == 0 then
+        DebugMsg("DEBUG: No active quests according to API")
+        return
+    end
+    
+    -- Собираем названия квестов из сырых данных
+    local rawTitles = {}
+    for i = 1, dataSize do
+        if type(questsTable[i]) == "string" and questsTable[i] ~= "" then
+            if not tonumber(questsTable[i]) then
+                table.insert(rawTitles, questsTable[i])
+            end
+        end
+    end
+    
+    DebugMsg(string.format("DEBUG: Found %d titles in raw data", #rawTitles))
+    
+    -- Функция для проверки завершённости квеста через objectives
+    local function IsQuestComplete(questTitle)
+        local numEntries = GetNumQuestLogEntries()
+        if numEntries and numEntries > 0 then
+            for q = 1, numEntries do
+                local qTitle = GetQuestLogTitle(q)
+                if qTitle == questTitle then
+                    local numObjectives = GetNumQuestLeaderBoards(q)
+                    
+                    if not numObjectives or numObjectives == 0 then
+                        return true
+                    end
+                    
+                    local allFinished = true
+                    for obj = 1, numObjectives do
+                        local objText, objType, objFinished = GetQuestLogLeaderBoard(obj, q)
+                        if not objFinished then
+                            allFinished = false
+                            break
+                        end
+                    end
+                    return allFinished
+                end
+            end
+        end
+        return false
+    end
+    
+    -- Получаем все квесты из журнала с их статусом
+    local allQuests = {}
+    if GetNumQuestLogEntries then
+        local numEntries = GetNumQuestLogEntries()
+        if numEntries and numEntries > 0 then
+            for q = 1, numEntries do
+                local qTitle = GetQuestLogTitle(q)
+                if qTitle and qTitle ~= "" then
+                    local isComplete = IsQuestComplete(qTitle)
+                    table.insert(allQuests, {
+                        title = qTitle,
+                        index = q,
+                        isComplete = isComplete
+                    })
+                    DebugMsg(string.format("DEBUG: QuestLog[%d]: %s (complete=%s)", 
+                        q, qTitle, tostring(isComplete)))
+                end
+            end
+        end
+    end
+    
+    -- Определяем активные квесты для этого NPC
+    local activeQuestTitles = {}
+    local addedTitles = {}
+    
+    -- Получаем имя текущего NPC
+    local currentNPC = UnitName("npc")
+    DebugMsg(string.format("DEBUG: Current NPC: %s", currentNPC or "unknown"))
+    
+    -- 1. Добавляем квесты из сырых данных
+    for _, rawTitle in ipairs(rawTitles) do
+        for _, quest in ipairs(allQuests) do
+            if quest.title == rawTitle and not addedTitles[quest.title] then
+                table.insert(activeQuestTitles, quest)
+                addedTitles[quest.title] = true
+                DebugMsg(string.format("DEBUG: Added quest from raw data: %s (complete=%s)", 
+                    rawTitle, tostring(quest.isComplete)))
+                break
+            end
+        end
+    end
+    
+    -- 2. Ищем квесты, содержащие имя NPC в названии (самый надёжный способ)
+    if #activeQuestTitles < numActiveQuests and currentNPC then
+        DebugMsg("DEBUG: Looking for quests with NPC name in title...")
+        
+        local lowerNPC = string.lower(currentNPC)
+        -- Разбиваем имя NPC на части (например "Капитан Келисендра" -> "капитан", "келисендра")
+        local npcParts = {}
+        for part in string.gmatch(lowerNPC, "[^%s]+") do
+            table.insert(npcParts, part)
+        end
+        
+        for _, quest in ipairs(allQuests) do
+            if not addedTitles[quest.title] then
+                local lowerTitle = string.lower(quest.title)
+                local found = false
+                
+                -- Проверяем, содержит ли название квеста имя NPC (полностью или частично)
+                for _, part in ipairs(npcParts) do
+                    if #part > 3 and string.find(lowerTitle, part) then
+                        found = true
+                        break
+                    end
+                end
+                
+                -- Также проверяем прямые совпадения
+                if string.find(lowerTitle, lowerNPC) then
+                    found = true
+                end
+                
+                if found then
+                    table.insert(activeQuestTitles, quest)
+                    addedTitles[quest.title] = true
+                    DebugMsg(string.format("DEBUG: Added quest by NPC name in title: %s", quest.title))
+                    
+                    if #activeQuestTitles >= numActiveQuests then
+                        break
+                    end
+                end
+            end
+        end
+    end
+    
+    -- 3. Ищем квесты, которые можно сдать (и они завершены)
+    if #activeQuestTitles < numActiveQuests then
+        DebugMsg("DEBUG: Looking for turn-in quests...")
+        
+        -- Сохраняем текущий выбранный квест
+        local originalQuest = GetQuestLogSelection()
+        
+        for _, quest in ipairs(allQuests) do
+            if not addedTitles[quest.title] and quest.isComplete then
+                SelectQuestLogEntry(quest.index)
+                
+                if IsQuestCompletable() then
+                    table.insert(activeQuestTitles, quest)
+                    addedTitles[quest.title] = true
+                    DebugMsg(string.format("DEBUG: Added turn-in quest: %s", quest.title))
+                    
+                    if #activeQuestTitles >= numActiveQuests then
+                        break
+                    end
+                end
+            end
+        end
+        
+        if originalQuest and originalQuest > 0 then
+            SelectQuestLogEntry(originalQuest)
+        end
+    end
+    
+    -- 4. Последний шанс: просто берём первый завершённый квест
+    if #activeQuestTitles < numActiveQuests then
+        DebugMsg("DEBUG: Taking first available completed quest...")
+        
+        for _, quest in ipairs(allQuests) do
+            if not addedTitles[quest.title] and quest.isComplete then
+                table.insert(activeQuestTitles, quest)
+                addedTitles[quest.title] = true
+                DebugMsg(string.format("DEBUG: Added quest (fallback): %s", quest.title))
+                
+                if #activeQuestTitles >= numActiveQuests then
+                    break
+                end
+            end
+        end
+    end
+    
+    DebugMsg(string.format("DEBUG: Final active quests count: %d (expected %d)", #activeQuestTitles, numActiveQuests))
+    
+    if #activeQuestTitles == 0 then
+        DebugMsg("DEBUG: No active quests to display")
+        return
+    end
+    
+    -- Отображаем квесты
+    for i = 1, #activeQuestTitles do
         if DGossipFrame.buttonIndex > NUMGOSSIPBUTTONS then break end
-
-        local titleButton = getglobal("DGossipTitleButton" .. DGossipFrame.buttonIndex);
+        
+        local titleButton = getglobal("DGossipTitleButton" .. DGossipFrame.buttonIndex)
         if not titleButton then break end
-
-        local quest = quests[i]
+        
+        local quest = activeQuestTitles[i]
         local questTitle = quest.title
         local isComplete = quest.isComplete
-
+        
+        -- Fallback для квестов типа "поговорить"
+        if not isComplete and IsTalkQuest(questTitle) then
+            isComplete = true
+        end
+        
         local displayText = DGossipFrame.buttonIndex .. ". " .. questTitle
-
         DGossipTitleButton_SetGossipText(titleButton, displayText)
-
-        titleButton:SetID(titleIndex);
+        
+        titleButton:SetID(i)
         titleButton.type = "active"
-        titleButton.questIndex = titleIndex
+        titleButton.questIndex = i
         titleButton.isGossip = true
         titleButton.isComplete = isComplete
-
+        titleButton.questTitle = questTitle
+        
         titleButton:SetScript("OnClick", function()
             DGossipTitleButton_OnClick_Direct(this)
         end)
-
+        
         -- Иконка
         local gossipIcon = _G[titleButton:GetName() .. "QuestIcon"]
         if not gossipIcon then
@@ -1342,59 +1411,41 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
                 end
             end
         end
-
+        
         if gossipIcon then
             gossipIcon:ClearAllPoints()
             gossipIcon:SetWidth(24)
             gossipIcon:SetHeight(24)
             gossipIcon:SetPoint("LEFT", titleButton, "LEFT", 5, 0)
-
-            -- Выбор иконки в зависимости от isComplete
-            local iconPath
+            
             if isComplete then
-                iconPath = "Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\completeQuestIcon"
+                gossipIcon:SetTexture("Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\completeQuestIcon")
             else
-                iconPath = "Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\incompleteQuestIcon"
+                gossipIcon:SetTexture("Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\incompleteQuestIcon")
             end
-
-            gossipIcon:SetTexture(iconPath)
-
-            -- Проверяем загрузилась ли текстура
-            if not gossipIcon:GetTexture() then
-                DebugMsg(string.format("DEBUG: WARNING - Icon not loaded, trying forward slashes"))
-                iconPath = string.gsub(iconPath, "\\\\", "/")
-                gossipIcon:SetTexture(iconPath)
-                DebugMsg(string.format("DEBUG: Forward slash path result: %s", tostring(gossipIcon:GetTexture() ~= nil)))
-            end
-
             gossipIcon:Show()
-            DebugMsg(string.format("DEBUG: Set icon for '%s' - isComplete=%s, texture=%s", 
-                questTitle, tostring(isComplete), tostring(gossipIcon:GetTexture())))
-        else
-            DebugMsg(string.format("DEBUG: ERROR - No gossipIcon found for button %d", DGossipFrame.buttonIndex))
         end
-
-        -- Настройка кнопки
+        
         titleButton:SetNormalTexture("Interface\\AddOns\\DialogUI\\src\\assets\\art\\parchment\\OptionBackground-common")
-
         local btnText = titleButton:GetFontString()
         if btnText then
             btnText:ClearAllPoints()
             btnText:SetPoint("LEFT", titleButton, "LEFT", 35, 0)
         end
-
+        
         titleButton:Show()
-
-        -- Динамическое позиционирование
+        
         if DGossipFrame.buttonIndex > 1 then
             local prevButton = getglobal("DGossipTitleButton" .. (DGossipFrame.buttonIndex - 1))
             if prevButton then
                 titleButton:SetPoint("TOPLEFT", prevButton, "BOTTOMLEFT", 0, -5)
             end
         end
-
-        DGossipFrame.buttonIndex = DGossipFrame.buttonIndex + 1;
-        titleIndex = titleIndex + 1
+        
+        DebugMsg(string.format("DEBUG: Added button for quest: %s (ID=%d, complete=%s)", 
+            questTitle, i, tostring(isComplete)))
+        
+        DGossipFrame.buttonIndex = DGossipFrame.buttonIndex + 1
     end
 end
 
