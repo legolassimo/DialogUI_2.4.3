@@ -16,6 +16,29 @@ local COLORS = {
     Ivory = {0.87, 0.86, 0.75}
 };
 
+local function IsTalkQuest(questTitle)
+    if not questTitle then return false end
+    
+    local lowerTitle = string.lower(questTitle)
+    
+    -- Более широкие паттерны для захвата всех вариантов
+    if string.find(lowerTitle, "поговор") then return true end
+    if string.find(lowerTitle, "долож") then return true end
+    if string.find(lowerTitle, "вернис") then return true end  -- вернись/вернитесь
+    if string.find(lowerTitle, "сообщи") then return true end
+    if string.find(lowerTitle, "передай") then return true end
+    if string.find(lowerTitle, "отнеси") then return true end
+    
+    -- Английские варианты
+    if string.find(lowerTitle, "speak") then return true end
+    if string.find(lowerTitle, "talk") then return true end
+    if string.find(lowerTitle, "report") then return true end
+    if string.find(lowerTitle, "return") then return true end
+    if string.find(lowerTitle, "deliver") then return true end
+    
+    return false
+end
+
 local savedGossipQuests = {
     available = {},
     active = {},
@@ -1155,7 +1178,7 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
     local quests = {}
     local i = 1
 
-    -- ИСПРАВЛЕНО: Последовательный парсинг с правильным определением isComplete
+    -- Последовательный парсинг с правильным определением isComplete
     while i <= dataSize do
         local field = questsTable[i]
 
@@ -1168,12 +1191,12 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
 
             local nextIndex = i + 1
 
-            -- ИСПРАВЛЕНО: Пропускаем nil поля
+            -- Пропускаем nil поля
             while nextIndex <= dataSize and questsTable[nextIndex] == nil do
                 nextIndex = nextIndex + 1
             end
 
-            -- Ищем level (число > 1)
+            -- Ищем level (число > 1 или < 0)
             if nextIndex <= dataSize and type(questsTable[nextIndex]) == "number" then
                 local val = questsTable[nextIndex]
                 if val > 1 or val < 0 then
@@ -1182,7 +1205,7 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
                 end
             end
 
-            -- ИСПРАВЛЕНО: Пропускаем nil снова
+            -- Пропускаем nil снова
             while nextIndex <= dataSize and questsTable[nextIndex] == nil do
                 nextIndex = nextIndex + 1
             end
@@ -1218,8 +1241,38 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
                 else
                     break
                 end
-                -- ИСПРАВЛЕНО: Выходим после обработки флагов
                 break
+            end
+
+            -- === ИСПРАВЛЕНО: Определение isComplete для 2.4.3 ===
+            if not isComplete then
+                -- Способ 1: Проверка по ключевым словам в названии
+                if IsTalkQuest(questTitle) then
+                    isComplete = true
+                    DebugMsg(string.format("DEBUG: Quest '%s' matched TALK keywords -> COMPLETE", questTitle))
+                else
+                    -- Способ 2: Проверка через QuestLog (0 objectives = talk quest)
+                    local numEntries = GetNumQuestLogEntries()
+                    if numEntries and numEntries > 0 then
+                        for q = 1, numEntries do
+                            local qTitle, qLevel, qTag, qGroup, qPlayer, qComplete = GetQuestLogTitle(q)
+                            if qTitle and qTitle == questTitle then
+                                local numObjectives = GetNumQuestLeaderBoards(q)
+                                if not numObjectives or numObjectives == 0 then
+                                    isComplete = true
+                                    DebugMsg(string.format("DEBUG: Quest '%s' has 0 objectives -> COMPLETE", questTitle))
+                                end
+                                break
+                            end
+                        end
+                    end
+                    
+                    -- Способ 3: Если данные состоят только из 2 полей — auto-complete (2.4.3 особенность)
+                    if not isComplete and dataSize == 2 then
+                        isComplete = true
+                        DebugMsg(string.format("DEBUG: 2-field format in 2.4.3 -> auto COMPLETE"))
+                    end
+                end
             end
 
             table.insert(quests, {
@@ -1288,10 +1341,10 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
             gossipIcon:SetHeight(24)
             gossipIcon:SetPoint("LEFT", titleButton, "LEFT", 5, 0)
 
-            -- ИСПРАВЛЕНО: Используем правильные пути с двойными обратными слешами
+            -- Выбор иконки в зависимости от isComplete
             local iconPath
             if isComplete then
-                iconPath = "Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\activeQuestIcon"
+                iconPath = "Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\completeQuestIcon"
             else
                 iconPath = "Interface\\AddOns\\DialogUI\\src\\assets\\art\\icons\\incompleteQuestIcon"
             end
@@ -1301,7 +1354,6 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
             -- Проверяем загрузилась ли текстура
             if not gossipIcon:GetTexture() then
                 DebugMsg(string.format("DEBUG: WARNING - Icon not loaded, trying forward slashes"))
-                -- Пробуем с прямыми слешами
                 iconPath = string.gsub(iconPath, "\\\\", "/")
                 gossipIcon:SetTexture(iconPath)
                 DebugMsg(string.format("DEBUG: Forward slash path result: %s", tostring(gossipIcon:GetTexture() ~= nil)))
@@ -1315,13 +1367,13 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
         end
 
         -- Настройка кнопки
-		titleButton:SetNormalTexture("Interface\\AddOns\\DialogUI\\src\\assets\\art\\parchment\\OptionBackground-common")
+        titleButton:SetNormalTexture("Interface\\AddOns\\DialogUI\\src\\assets\\art\\parchment\\OptionBackground-common")
 
-		local btnText = titleButton:GetFontString()
-		if btnText then
-			btnText:ClearAllPoints()
-			btnText:SetPoint("LEFT", titleButton, "LEFT", 35, 0)
-		end
+        local btnText = titleButton:GetFontString()
+        if btnText then
+            btnText:ClearAllPoints()
+            btnText:SetPoint("LEFT", titleButton, "LEFT", 35, 0)
+        end
 
         titleButton:Show()
 
