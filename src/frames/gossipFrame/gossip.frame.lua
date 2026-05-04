@@ -1251,27 +1251,35 @@ function DGossipFrameActiveQuestsUpdate(questsTable)
                     isComplete = true
                     DebugMsg(string.format("DEBUG: Quest '%s' matched TALK keywords -> COMPLETE", questTitle))
                 else
-                    -- Способ 2: Проверка через QuestLog (0 objectives = talk quest)
+                    -- Способ 2: Проверка через QuestLog
+                    -- 0 objectives = talk quest (выполнен)
+                    -- >0 objectives = обычный квест (проверяем qComplete)
                     local numEntries = GetNumQuestLogEntries()
                     if numEntries and numEntries > 0 then
                         for q = 1, numEntries do
                             local qTitle, qLevel, qTag, qGroup, qPlayer, qComplete = GetQuestLogTitle(q)
                             if qTitle and qTitle == questTitle then
                                 local numObjectives = GetNumQuestLeaderBoards(q)
+                                
                                 if not numObjectives or numObjectives == 0 then
+                                    -- Нет objectives — это "поговорительный" квест, выполнен
                                     isComplete = true
                                     DebugMsg(string.format("DEBUG: Quest '%s' has 0 objectives -> COMPLETE", questTitle))
+                                elseif qComplete and qComplete ~= 0 then
+                                    -- Есть objectives и qComplete говорит что выполнен
+                                    isComplete = true
+                                    DebugMsg(string.format("DEBUG: Quest '%s' qComplete=%s -> COMPLETE", questTitle, tostring(qComplete)))
+                                else
+                                    -- Есть objectives и qComplete=nil/0 — НЕ выполнен
+                                    isComplete = false
+                                    DebugMsg(string.format("DEBUG: Quest '%s' has %d objectives, qComplete=%s -> INCOMPLETE", questTitle, numObjectives, tostring(qComplete)))
                                 end
                                 break
                             end
                         end
                     end
                     
-                    -- Способ 3: Если данные состоят только из 2 полей — auto-complete (2.4.3 особенность)
-                    if not isComplete and dataSize == 2 then
-                        isComplete = true
-                        DebugMsg(string.format("DEBUG: 2-field format in 2.4.3 -> auto COMPLETE"))
-                    end
+                    -- УБРАНО: Способ 3 (2-field auto-complete) — он давал ложные срабатывания!
                 end
             end
 
